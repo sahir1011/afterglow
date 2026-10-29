@@ -19,6 +19,9 @@ try {
 const KEY = (process.env.YOUTUBE_API_KEY || '').trim();
 const PORT = Number(process.env.PORT) || 5173;
 const HAS_KEY = KEY.length > 20 && !KEY.startsWith('paste');
+// Spotify uses PKCE sign-in in the browser, so only the public Client ID is needed (no secret).
+const SPOTIFY_ID = /^[a-f0-9]{32}$/i.test((process.env.SPOTIFY_CLIENT_ID || '').trim()) ? process.env.SPOTIFY_CLIENT_ID.trim() : '';
+const IMG_HOSTS = /^(i\.ytimg\.com|i\.scdn\.co|mosaic\.scdn\.co|image-cdn-[a-z]+\.spotifycdn\.com|[a-z0-9-]+\.spotifycdn\.com)$/i;
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
 
@@ -74,7 +77,17 @@ const cleanId = s => (s || '').replace(/[^\w-]/g, '').slice(0, 20);
 
 const ROUTES = {
   // ---- these work without a key ----
-  async '/api/status'(res) { send(res, 200, { hasKey: HAS_KEY }); },
+  async '/api/status'(res) { send(res, 200, { hasKey: HAS_KEY, spotifyClientId: SPOTIFY_ID }); },
+
+  // Same-origin copy of album art (Spotify or YouTube CDNs only) so the page can read its colours.
+  async '/api/img'(res, url) {
+    let u; try { u = new URL(url.searchParams.get('u') || ''); } catch { return send(res, 400, { error: 'Bad image URL' }); }
+    if (u.protocol !== 'https:' || !IMG_HOSTS.test(u.hostname)) return send(res, 400, { error: 'Image host not allowed' });
+    const r = await fetch(u);
+    if (!r.ok) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': r.headers.get('content-type') || 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+    res.end(Buffer.from(await r.arrayBuffer()));
+  },
 
   // Title + channel for one video via oEmbed, so pasted links and starter picks always work.
   async '/api/info'(res, url) {
@@ -140,4 +153,5 @@ http.createServer((req, res) => {
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`\n  Afterglow is running → http://127.0.0.1:${PORT}\n`);
   if (!HAS_KEY) console.log('  No YouTube API key yet: search and trending are off. Copy .env.example to .env and paste your key in.\n');
+  console.log(SPOTIFY_ID ? '  Spotify is set up. Sign in from the sidebar.\n' : '  Spotify is off. Add SPOTIFY_CLIENT_ID to .env to turn it on (see README).\n');
 });

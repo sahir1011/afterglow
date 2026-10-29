@@ -23,13 +23,14 @@
     <nav class="nav" id="nav"></nav>
     <div class="lib-head"><span>Your library</span><button data-act="new-pl" aria-label="Create playlist" title="Create playlist"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <ul class="plist" id="plist"></ul>
+    <div class="sp-chip" id="spchip"></div>
   </aside>
 
   <main class="main glass" id="main"></main>
 
   <aside class="np glass" id="np">
     <div class="np-head"><span id="np-from">Now playing</span><button class="icon-btn" data-act="vibe" aria-label="Open vibe mode" id="np-vibe"></button></div>
-    <div class="np-stage"><div class="slot" id="np-slot"></div><div class="np-empty" id="np-empty"><span></span><p>Your video shows up here when a song plays.</p></div></div>
+    <div class="np-stage"><div class="slot" id="np-slot"></div><div class="art-stage" id="np-art" hidden><img class="bg" alt=""><img class="fg" alt=""></div><div class="np-empty" id="np-empty"><span></span><p>Your video shows up here when a song plays.</p></div></div>
     <div class="np-info" id="np-info"></div>
     <div class="upnext" id="upnext"></div>
   </aside>
@@ -60,7 +61,7 @@
 <div class="vibe" id="vibe" hidden>
   <div class="bg" id="vibebg"></div>
   <canvas id="vibecv"></canvas>
-  <div class="vibe-stage"><div class="slot" id="vibe-slot"></div></div>
+  <div class="vibe-stage"><div class="slot" id="vibe-slot"></div><div class="art-stage" id="vibe-art" hidden><img class="bg" alt=""><img class="fg" alt=""></div></div>
   <div class="vt"><h2 id="vibet"></h2><p id="vibes"></p></div>
   <div class="close">
     <button data-act="toggle" aria-label="Play or pause" id="vibeplay"></button>

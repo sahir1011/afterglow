@@ -306,13 +306,45 @@ input[type=range]:hover::-moz-range-thumb { opacity: 1; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
+/* ---------- Spotify ---------- */
+.plist-lbl { padding: 14px 10px 4px; color: var(--dim); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; }
+.sp-chip { border-top: 1px solid var(--line); padding-top: 12px; }
+.sp-connect, .sp-me { width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 14px; text-align: left; }
+.sp-connect { background: rgba(255,255,255,.05); transition: background .2s; }
+.sp-connect:hover { background: rgba(255,255,255,.1); }
+.sp-connect span, .sp-me span { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.sp-connect strong, .sp-me strong { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-connect em, .sp-me em { font-style: normal; font-size: 12px; color: var(--mute); }
+.sp-chip .dot { width: 36px; height: 36px; flex: none !important; border-radius: 50%; background: conic-gradient(from 90deg, var(--c1), var(--c3), var(--c2), var(--c1)); box-shadow: 0 0 18px -2px var(--c1); }
+.sp-me img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; }
+.sp-me .icon-btn { width: 32px; height: 32px; } .sp-me .icon-btn svg { width: 16px; height: 16px; }
+.sp-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 22px 24px; border-radius: 22px; position: relative; overflow: hidden; isolation: isolate; border: 1px solid rgba(255,255,255,.12); }
+.sp-banner::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(90% 160% at 0% 0%, var(--c1), transparent 60%), radial-gradient(90% 160% at 100% 100%, var(--c2), transparent 60%); opacity: .45; }
+.sp-banner h3 { font-size: 22px; letter-spacing: -.03em; margin-bottom: 4px; }
+.sp-banner p { margin: 0; color: rgba(255,255,255,.8); line-height: 1.5; }
+.srcs { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.srcs .hint { margin: 0 0 0 6px; }
+.src-btn { padding: 7px 16px; border-radius: 999px; background: rgba(255,255,255,.08); font-weight: 700; font-size: 13px; transition: background .2s, color .2s; }
+.src-btn:hover { background: rgba(255,255,255,.14); }
+.src-btn.on { background: var(--fg); color: var(--ink); }
+.src-link { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 700; color: var(--mute); text-decoration: none; letter-spacing: .02em; }
+.src-link:hover { color: var(--fg); text-decoration: underline; }
+.art-stage { position: absolute; inset: 0; border-radius: 14px; overflow: hidden; display: grid; place-items: center; background: #000;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 20px 70px -10px var(--c1), 0 0 120px -30px var(--c2); }
+.vibe-stage .art-stage { border-radius: 22px; }
+.art-stage .bg { position: absolute; inset: -20%; width: 140%; height: 140%; max-width: none; object-fit: cover; filter: blur(30px) saturate(1.5) brightness(.6); }
+.art-stage .fg { position: relative; height: 86%; width: auto; aspect-ratio: 1; object-fit: cover; border-radius: 10px; box-shadow: 0 20px 50px -10px rgba(0,0,0,.8); transition: transform .6s cubic-bezier(.2,.8,.2,1); }
+body.playing .art-stage .fg { transform: scale(1.03); }
+.vibe-stage .art-stage .fg { border-radius: 16px; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1240px) { .app { grid-template-columns: 236px minmax(0, 1fr); } .np { display: none; } }
 @media (max-width: 980px) { .thead, .row { grid-template-columns: 30px minmax(0, 1fr) 34px 34px 52px; } .row .al, .row .pl, .thead .ha, .thead .hp { display: none; } .quick { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; padding-block: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-bottom, 0px)); }
   .side { flex-direction: row; align-items: center; padding: 8px 10px; gap: 8px; }
-  .brand span, .lib-head, .plist { display: none; }
+  .brand span, .lib-head, .plist, .sp-chip { display: none; }
+  .sp-banner { grid-template-columns: minmax(0, 1fr); }
   .brand { padding: 0 4px; }
   .nav { flex-direction: row; flex: 1; justify-content: space-around; }
   .nav button { padding: 8px 10px; gap: 0; }

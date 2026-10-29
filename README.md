@@ -25,9 +25,23 @@ The key stays on your computer. The server makes the YouTube calls, so the key n
 
 **Daily limit:** the free key gives you 10,000 units a day. One search uses 100 units, so you get about 100 new searches a day. Repeating a search uses no units, because the server remembers results for 6 hours. Playing songs uses no units at all.
 
+## Connect Spotify (needs Spotify Premium)
+
+With Premium, Afterglow plays any song on Spotify and shows your playlists, Liked Songs, top tracks and recent plays. You only need a **Client ID**. There's no secret, because sign-in uses Spotify's PKCE flow in your browser.
+
+1. Go to https://developer.spotify.com/dashboard, log in, accept the terms, and click **Create app**.
+2. Give it any name and description. Under **Redirect URIs**, add exactly `http://127.0.0.1:5173/callback`.
+3. Under **Which API/SDKs are you planning to use?**, tick **Web API** and **Web Playback SDK**, then click **Save**.
+4. Open the app's **Settings** and copy the **Client ID**. Paste it after `SPOTIFY_CLIENT_ID=` in `.env`.
+5. Restart the server, open **http://127.0.0.1:5173** (Spotify won't accept `localhost`), and click **Connect Spotify** at the bottom of the sidebar.
+
+If Spotify says your account isn't allowed, open your app in the dashboard, go to **User Management**, and add the email address of your Spotify account. New Spotify apps start in development mode, which only works for accounts you add there.
+
 ## Features
 
+- Two sources: YouTube and Spotify. A queue can mix songs from both.
 - Search all of YouTube's music, see what's trending in your country, and pick from 16 mood shortcuts
+- With Spotify: search, your playlists, Liked Songs (hearting a song syncs with Spotify), top tracks, recently played, and pasted Spotify song links
 - Liked Songs, your own playlists, a queue ("Play next" and "Add to queue"), and Recently played. All of these are saved in your browser.
 - Shuffle and repeat (all, or one song)
 - The colour theme comes from each song's thumbnail

@@ -69,14 +69,14 @@ let liked = store.get('ag2-liked', []);
 let playlists = store.get('ag2-pls', []);
 let recent = store.get('ag2-recent', []);
 const trending = { tracks: [], loading: false, err: null };
-const search = { q: '', tracks: [], next: null, loading: false, err: null };
+const search = { q: '', src: 'yt', tracks: [], next: null, loading: false, err: null };
 
 const REG = new Map();
 const reg = t => { const o = REG.get(t.id); if (o) { if (!o.dur && t.dur) o.dur = t.dur; if (!o.views && t.views) o.views = t.views; return o; } REG.set(t.id, t); return t; };
 const regAll = l => l.map(reg);
 liked = regAll(liked); recent = regAll(recent); playlists.forEach(p => p.tracks = regAll(p.tracks));
 regAll(STARTERS);
-const plain = t => ({ id: t.id, title: t.title, artist: t.artist, channel: t.channel, thumb: t.thumb, dur: t.dur || 0, views: t.views || 0 });
+const plain = t => ({ id: t.id, src: t.src, uri: t.uri, title: t.title, artist: t.artist, channel: t.channel, thumb: t.thumb, big: t.big, dur: t.dur || 0, views: t.views || 0 });
 const save = () => { store.set('ag2-liked', liked.map(plain)); store.set('ag2-pls', playlists.map(p => ({ ...p, tracks: p.tracks.map(plain) }))); store.set('ag2-recent', recent.map(plain)); };
 const isLiked = id => liked.some(t => t.id === id);
 
@@ -93,6 +93,10 @@ function listFor(key) {
   if (key === 'trending') return trending.tracks;
   if (key === 'search') return search.tracks;
   if (key === 'queue') return S.queue;
+  if (key === 'sp-liked') return SP.liked;
+  if (key === 'sp-top') return SP.top;
+  if (key === 'sp-recent') return SP.recent;
+  if (key.startsWith('sppl:')) return SP.lists[key.slice(5)] || [];
   if (key.startsWith('pl:')) return playlists.find(p => p.id === key.slice(3))?.tracks || [];
   if (key.startsWith('one:')) { const t = REG.get(key.slice(4)); return t ? [t] : []; }
   return [];
@@ -104,11 +108,18 @@ function nameFor(key) {
   if (key === 'trending') return `Trending in ${regionName}`;
   if (key === 'search') return `Search: ${search.q}`;
   if (key.startsWith('pl:')) return playlists.find(p => p.id === key.slice(3))?.name || 'Playlist';
+  if (key === 'sp-liked') return 'Spotify Liked Songs';
+  if (key === 'sp-top') return 'Your top tracks';
+  if (key === 'sp-recent') return 'Recently played on Spotify';
+  if (key.startsWith('sppl:')) return SP.playlists.find(p => p.id === key.slice(5))?.name || 'Spotify playlist';
   return 'Now playing';
 }
 function currentList() {
   const v = S.view;
   if (v.type === 'playlist') return ['pl:' + v.id, listFor('pl:' + v.id)];
+  if (v.type === 'sppl' && listFor('sppl:' + v.id).length) return ['sppl:' + v.id, listFor('sppl:' + v.id)];
+  if (v.type === 'sp-liked' && SP.liked.length) return ['sp-liked', SP.liked];
+  if (SP.top.length && v.type === 'home') return ['sp-top', SP.top];
   if (v.type === 'liked' && liked.length) return ['liked', liked];
   if (v.type === 'search' && search.tracks.length) return ['search', search.tracks];
   if (trending.tracks.length) return ['trending', trending.tracks];
@@ -124,6 +135,7 @@ window.onYouTubeIframeAPIReady = () => {
     events: {
       onReady() { ytReady = true; applyVol(); if (pendingId) { yt.loadVideoById(pendingId); pendingId = null; } },
       onStateChange(e) {
+        if (S.track?.src === 'sp') return;
         const st = e.data;
         if (st === 1) {
           S.playing = true; S.loading = false; errStreak = 0;
@@ -135,6 +147,7 @@ window.onYouTubeIframeAPIReady = () => {
         syncState();
       },
       onError() {
+        if (S.track?.src === 'sp') return;
         S.loading = false; S.playing = false; errStreak++;
         if (errStreak < 5 && S.queue.length > 1) { toast('This one only plays on YouTube itself. Skipping to the next song.'); setTimeout(() => next(true, true), 1200); }
         else toast('This video only plays on YouTube itself. Try another song.');
@@ -150,7 +163,9 @@ function playTrack(t, list, from) {
   if (!S.queue.some(x => x.id === t.id)) { S.queue = [t]; S.from = from || ''; }
   S.track = t; S.loading = true; S.playing = false;
   recent = [t, ...recent.filter(x => x.id !== t.id)].slice(0, 30); save();
-  load(t.id); onTrackChange();
+  if (t.src === 'sp') { if (ytReady) yt.pauseVideo(); spPlay(t); }
+  else { if (SP.player) SP.player.pause().catch(() => {}); load(t.id); }
+  onTrackChange();
 }
 function toggle() {
   if (!S.track) {
@@ -158,16 +173,33 @@ function toggle() {
     if (l.length) playTrack(S.shuffle ? l[Math.floor(Math.random() * l.length)] : l[0], l, key);
     return;
   }
+  if (S.track.src === 'sp') {
+    if (SP.player && SP.state) { SP.player.activateElement?.(); SP.player.togglePlay(); } else spPlay(S.track);
+    return;
+  }
   if (!ytReady) return;
   const st = yt.getPlayerState();
   if (st === 1 || st === 3) yt.pauseVideo(); else yt.playVideo();
 }
-const curTime = () => (ytReady && S.track && yt.getCurrentTime) ? yt.getCurrentTime() || 0 : 0;
-const curDur = () => S.track ? (S.track.dur || (ytReady && yt.getDuration ? yt.getDuration() : 0) || 0) : 0;
-function seekTo(sec) { if (!ytReady || !S.track) return; yt.seekTo(Math.max(0, Math.min(sec, curDur() - 1)), true); }
+function curTime() {
+  if (!S.track) return 0;
+  if (S.track.src === 'sp') {
+    const st = SP.state; if (!st) return 0;
+    const ms = st.paused ? st.position : st.position + (performance.now() - SP.stateAt);
+    return Math.min(ms, st.duration || ms) / 1000;
+  }
+  return ytReady && yt.getCurrentTime ? yt.getCurrentTime() || 0 : 0;
+}
+const curDur = () => S.track ? (S.track.dur || (S.track.src !== 'sp' && ytReady && yt.getDuration ? yt.getDuration() : 0) || 0) : 0;
+function seekTo(sec) {
+  if (!S.track) return;
+  sec = Math.max(0, Math.min(sec, curDur() - 1));
+  if (S.track.src === 'sp') { SP.player?.seek(Math.round(sec * 1000)); return; }
+  if (ytReady) yt.seekTo(sec, true);
+}
 function next(auto, skipping) {
   if (!S.track) return;
-  if (auto && !skipping && S.repeat === 2) { seekTo(0); yt.playVideo(); return; }
+  if (auto && !skipping && S.repeat === 2) { if (S.track.src === 'sp') spPlay(S.track); else { seekTo(0); yt.playVideo(); } return; }
   const q = S.queue, i = q.findIndex(x => x.id === S.track.id);
   let j;
   if (S.shuffle && q.length > 1) { do j = Math.floor(Math.random() * q.length); while (j === i); }
@@ -189,6 +221,166 @@ function applyVol() {
   $('#vol').value = S.volume; $('#vol').style.setProperty('--p', v + '%');
   $('#muteb').innerHTML = v === 0 ? I.mute : I.vol; $('#muteb').setAttribute('aria-label', S.muted ? 'Unmute' : 'Mute');
   if (ytReady) { yt.setVolume(S.volume); S.muted ? yt.mute() : yt.unMute(); }
+  SP.player?.setVolume(v / 100).catch?.(() => {});
+}
+
+/* ================= Spotify (PKCE sign-in + Web Playback SDK, needs Premium) ================= */
+const SP = { clientId: '', token: store.get('ag2-sp-tok', null), me: null, player: null, device: null, ready: false, pending: null,
+  state: null, stateAt: 0, busyUntil: 0, playlists: [], top: [], liked: [], recent: [], lists: {}, listErr: {}, loaded: false };
+const SP_SCOPES = 'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state user-library-read user-library-modify playlist-read-private playlist-read-collaborative user-top-read user-read-recently-played';
+const SP_ORIGIN = 'http://127.0.0.1:' + (location.port || '5173');
+const SP_REDIRECT = SP_ORIGIN + '/callback';
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const spRaw = t => t.id.slice(3);
+
+async function spLogin() {
+  // Spotify only accepts the 127.0.0.1 address (not "localhost") as a redirect, and the sign-in code must come back to the same address.
+  if (location.origin !== SP_ORIGIN) { location.href = SP_ORIGIN + '/#connect'; return; }
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  store.set('ag2-sp-ver', verifier);
+  location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+    response_type: 'code', client_id: SP.clientId, scope: SP_SCOPES, redirect_uri: SP_REDIRECT, code_challenge_method: 'S256', code_challenge: challenge
+  });
+}
+function spLogout() {
+  SP.player?.disconnect(); Object.assign(SP, { token: null, me: null, player: null, device: null, ready: false, state: null, playlists: [], top: [], liked: [], recent: [], lists: {}, loaded: false });
+  store.set('ag2-sp-tok', null);
+  if (S.track?.src === 'sp') { S.playing = false; S.loading = false; }
+  if (['sppl', 'sp-liked'].includes(S.view.type)) S.view = { type: 'home' };
+  search.src = 'yt'; renderMain(); syncState();
+}
+async function spTokenReq(params) {
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: SP.clientId, ...params })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error_description || j.error || 'Spotify sign-in failed. Try connecting again.');
+  SP.token = { access: j.access_token, refresh: j.refresh_token || SP.token?.refresh, exp: Date.now() + j.expires_in * 1000 };
+  store.set('ag2-sp-tok', SP.token);
+  return SP.token.access;
+}
+let spRefreshing = null;
+async function spAccess() {
+  if (!SP.token) throw new Error('Connect Spotify first.');
+  if (Date.now() < SP.token.exp - 60000) return SP.token.access;
+  spRefreshing ||= spTokenReq({ grant_type: 'refresh_token', refresh_token: SP.token.refresh })
+    .catch(e => { toast('Spotify sign-in expired. Connect again.'); spLogout(); throw e; })
+    .finally(() => { spRefreshing = null; });
+  return spRefreshing;
+}
+async function sp(path, opts = {}, retry = true) {
+  const tok = await spAccess();
+  const r = await fetch('https://api.spotify.com/v1' + path, { ...opts, headers: { Authorization: 'Bearer ' + tok, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+  if (r.status === 401 && retry) { SP.token.exp = 0; return sp(path, opts, false); }
+  const txt = await r.text(); let j = null; try { j = txt ? JSON.parse(txt) : null; } catch {}
+  if (!r.ok) {
+    const msg = j?.error?.message || `Spotify error ${r.status}`;
+    throw Object.assign(new Error(r.status === 403 && /regist|developer|user/i.test(msg)
+      ? 'Spotify says this account is not on the app\'s user list. Add your Spotify email under User Management in the Spotify developer dashboard.'
+      : r.status === 429 ? 'Spotify is rate-limiting requests. Wait a minute and try again.' : msg), { status: r.status });
+  }
+  return j;
+}
+const spTrack = t => {
+  if (!t || !t.id || t.is_local || (t.type && t.type !== 'track')) return null;
+  const im = t.album?.images || [];
+  return reg({ id: 'sp:' + t.id, src: 'sp', uri: t.uri, title: t.name, artist: (t.artists || []).map(a => a.name).join(', '), channel: t.album?.name || '',
+    thumb: (im[1] || im[0] || {}).url || '', big: (im[0] || {}).url || '', dur: (t.duration_ms || 0) / 1000, views: 0 });
+};
+const itemsOf = page => (page?.items || []).map(i => i.track || i.item || i).map(spTrack).filter(Boolean);
+
+function spInitPlayer() {
+  if (SP.player || SP.sdkLoading || !SP.token) return;
+  SP.sdkLoading = true;
+  window.onSpotifyWebPlaybackSDKReady = () => {
+    const p = SP.player = new Spotify.Player({ name: 'Afterglow', getOAuthToken: cb => spAccess().then(cb).catch(() => {}), volume: (S.muted ? 0 : S.volume) / 100 });
+    p.addListener('ready', ({ device_id }) => {
+      SP.device = device_id; SP.ready = true; renderSide();
+      if (SP.pending) { const t = SP.pending; SP.pending = null; spPlay(t); }
+    });
+    p.addListener('not_ready', () => { SP.ready = false; });
+    p.addListener('initialization_error', ({ message }) => toast('The Spotify player could not start in this browser: ' + message));
+    p.addListener('authentication_error', () => { toast('Spotify sign-in expired. Connect again.'); spLogout(); });
+    p.addListener('account_error', () => toast('Spotify only plays full songs here with a Premium account.'));
+    p.addListener('playback_error', ({ message }) => toast('Spotify could not play that song: ' + message));
+    p.addListener('player_state_changed', spOnState);
+    p.connect();
+  };
+  const s = document.createElement('script'); s.src = 'https://sdk.scdn.co/spotify-player.js'; document.head.appendChild(s);
+}
+function spOnState(st) {
+  if (!st) return;
+  const prev = SP.state, prevAt = SP.stateAt, now = performance.now();
+  SP.state = st; SP.stateAt = now;
+  const cur = S.track; if (!cur || cur.src !== 'sp') return;
+  if (now > SP.busyUntil && st.paused && st.position === 0 && prev && !prev.paused) {
+    const prevPos = prev.position + (now - prevAt);
+    const finished = (st.track_window?.previous_tracks || []).some(x => x.uri === cur.uri || 'sp:' + x.id === cur.id) || prevPos > (prev.duration || 0) - 2500;
+    if (finished) { S.playing = false; next(true); return; }
+  }
+  S.playing = !st.paused; S.loading = !!st.loading && st.paused;
+  if (st.duration && Math.abs((cur.dur || 0) - st.duration / 1000) > 2) cur.dur = st.duration / 1000;
+  syncState();
+}
+function spPlay(t) {
+  if (!SP.token) { S.loading = false; syncState(); toast('Connect Spotify (bottom of the sidebar) to play this song.'); return; }
+  SP.player?.activateElement?.();   // must run inside the click for some browsers to allow sound
+  if (!SP.ready) { SP.pending = t; spInitPlayer(); return; }
+  SP.busyUntil = performance.now() + 2500;
+  sp(`/me/player/play?device_id=${encodeURIComponent(SP.device)}`, { method: 'PUT', body: JSON.stringify({ uris: [t.uri] }) })
+    .catch(e => { S.loading = false; syncState(); toast(e.message); });
+}
+async function spSearch(q, offset = 0) {
+  for (const limit of [25, 10]) {   // newer Spotify apps may be capped at 10 results per page
+    try { const j = await sp(`/search?type=track&limit=${limit}&offset=${offset}&q=${encodeURIComponent(q)}`); return { tracks: itemsOf(j.tracks), next: j.tracks?.next ? offset + limit : null }; }
+    catch (e) { if (limit === 10 || !/limit/i.test(e.message)) throw e; }
+  }
+}
+async function spLoadPlaylist(id) {
+  if (SP.lists[id]) return;
+  SP.listErr[id] = null;
+  try {
+    let out = [], url = `/playlists/${id}/items?limit=100`;
+    try { await sp(url); } catch (e) { if (e.status === 404) url = `/playlists/${id}/tracks?limit=100`; else throw e; }
+    for (let off = 0; off < 500; off += 100) {
+      const page = await sp(url.replace('limit=100', `limit=100&offset=${off}`));
+      out = out.concat(itemsOf(page)); if (!page?.next) break;
+    }
+    SP.lists[id] = out;
+  } catch (e) { SP.listErr[id] = e.message; }
+  if (S.view.type === 'sppl' && S.view.id === id) renderMain();
+}
+async function spLoad() {
+  try {
+    SP.me = await sp('/me');
+    if (SP.me.product && SP.me.product !== 'premium') toast('This Spotify account is not Premium, so songs cannot play here.');
+  } catch (e) { toast(e.message); return; }
+  renderSide();
+  const [pl, top, liked, rec] = await Promise.allSettled([
+    sp('/me/playlists?limit=50'), sp('/me/top/tracks?limit=20&time_range=short_term'), sp('/me/tracks?limit=50'), sp('/me/player/recently-played?limit=40')
+  ]);
+  if (pl.value) SP.playlists = pl.value.items.filter(Boolean).map(p => ({ id: p.id, name: p.name, owner: p.owner?.display_name || '', img: p.images?.[0]?.url || '', count: p.tracks?.total ?? p.items?.total ?? 0 }));
+  if (top.value) SP.top = itemsOf(top.value);
+  if (liked.value) SP.liked = itemsOf(liked.value);
+  if (rec.value) { const seen = new Set(); SP.recent = itemsOf(rec.value).filter(t => !seen.has(t.id) && seen.add(t.id)); }
+  SP.loaded = true;
+  renderSide(); if (['home', 'library', 'search', 'sp-liked'].includes(S.view.type)) renderMain();
+}
+async function spBoot() {
+  const u = new URL(location.href);
+  if (u.pathname === '/callback') {
+    const code = u.searchParams.get('code'), err = u.searchParams.get('error');
+    history.replaceState(null, '', '/');
+    if (err) toast(err === 'access_denied' ? 'Spotify connection cancelled.' : 'Spotify sign-in failed: ' + err);
+    else if (code) {
+      try { await spTokenReq({ grant_type: 'authorization_code', code, redirect_uri: SP_REDIRECT, code_verifier: store.get('ag2-sp-ver', '') }); toast('Spotify connected'); }
+      catch (e) { toast(e.message); }
+    }
+  }
+  if (location.hash === '#connect') { history.replaceState(null, '', '/'); if (!SP.token) return spLogin(); }
+  if (SP.token) { search.src = 'sp'; spInitPlayer(); spLoad(); }
 }
 
 /* ================= colour theming from the thumbnail ================= */
@@ -216,7 +408,7 @@ function themeFrom(t) {
     const r = document.documentElement;
     r.style.setProperty('--c1', PAL[0]); r.style.setProperty('--c2', PAL[1]); r.style.setProperty('--c3', PAL[2]);
   };
-  img.src = '/api/thumb?id=' + encodeURIComponent(t.id);
+  img.src = t.src === 'sp' ? '/api/img?u=' + encodeURIComponent(t.thumb) : '/api/thumb?id=' + encodeURIComponent(t.id);
 }
 
 /* ================= views ================= */
@@ -238,9 +430,20 @@ const setupCard = () => `<section class="setup">
     <li>Stop the server and run <code>npm start</code> again, then refresh this page.</li>
   </ol>
 </section>`;
+const spSetupCard = () => `<section class="setup">
+  <h3>Connect Spotify: free developer app, about 3 minutes</h3>
+  <p>With Spotify Premium, Afterglow can play any song on Spotify and show your playlists, Liked Songs and top tracks. Spotify needs you to register a free app first. You only need its Client ID, not the secret.</p>
+  <ol>
+    <li>Open the <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Spotify developer dashboard</a>, log in, accept the terms, and click <b>Create app</b>.</li>
+    <li>Give it any name and description. Under <b>Redirect URIs</b>, add exactly <code>${SP_REDIRECT}</code> and click <b>Add</b>.</li>
+    <li>Under <b>Which API/SDKs are you planning to use?</b>, tick <b>Web API</b> and <b>Web Playback SDK</b>, then click <b>Save</b>.</li>
+    <li>Open the app's <b>Settings</b> and copy the <b>Client ID</b>.</li>
+    <li>Paste it after <code>SPOTIFY_CLIENT_ID=</code> in the <code>.env</code> file, restart the server, and refresh this page.</li>
+  </ol>
+</section>`;
 function rows(list, key) {
   return `<div class="tracks" role="list">
-    <div class="thead"><span>#</span><span>Title</span><span class="ha">Channel</span><span class="hp">Plays</span><span></span><span></span><span>Time</span></div>
+    <div class="thead"><span>#</span><span>Title</span><span class="ha">Album / channel</span><span class="hp">Plays</span><span></span><span></span><span>Time</span></div>
     ${list.map((t, i) => `<div class="row" role="listitem" tabindex="0" data-act="play-track" data-tid="${esc(t.id)}" data-list="${esc(key)}">
       <span class="n"><b>${i + 1}</b><i class="eq"><s></s><s></s><s></s><s></s></i>${I.play}</span>
       <span class="t"><img src="${esc(t.thumb)}" alt="" loading="lazy"><span><strong>${esc(t.title)}</strong><em>${esc(t.artist)}</em></span></span>
@@ -257,6 +460,7 @@ const card = (t, key, i, rank) => `<div class="card" role="button" tabindex="0" 
   <strong>${esc(t.title)}</strong><em>${esc(t.artist)}</em></div>`;
 const moodGrid = () => `<div class="moods">${MOODS.map(([n, q, a, b]) => `<button class="mood" data-act="mood" data-q="${esc(q)}" style="background:linear-gradient(135deg, ${a}, ${b})">${n}</button>`).join('')}</div>`;
 const skeleton = n => Array.from({ length: n }, () => '<div class="skel"></div>').join('');
+const spPlCard = p => `<div class="card" role="button" tabindex="0" data-act="open-sppl" data-id="${esc(p.id)}"><div class="art">${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy">` : `<div class="mosaic empty" style="aspect-ratio:1;border-radius:12px">${I.music}</div>`}<button class="fab" data-act="play-sppl" data-id="${esc(p.id)}" aria-label="Play ${esc(p.name)}">${I.play}</button></div><strong>${esc(p.name)}</strong><em>By ${esc(p.owner)} · ${p.count} songs</em></div>`;
 
 function renderMain() {
   const v = S.view, m = $('#main'); let h = '';
@@ -264,11 +468,18 @@ function renderMain() {
     const quick = (recent.length ? recent : STARTERS).slice(0, 6);
     h = `<div class="view">
       <h1 class="hello">${greet()}, <span>what's the mood?</span></h1>
-      <form class="paste" id="paste-form"><label class="field">${I.link}<span class="sr">YouTube link</span><input id="paste" placeholder="Paste a YouTube or YouTube Music link" autocomplete="off"></label><button class="solid" type="submit">Play it</button></form>
-      ${S.hasKey ? '' : setupCard()}
+      <form class="paste" id="paste-form"><label class="field">${I.link}<span class="sr">Song link</span><input id="paste" placeholder="Paste a YouTube or Spotify song link" autocomplete="off"></label><button class="solid" type="submit">Play it</button></form>
+      ${SP.clientId && !SP.token ? `<section class="sp-banner"><div><h3>Your Spotify, in Afterglow</h3><p>Connect your Premium account to play anything on Spotify, with your playlists and Liked Songs.</p></div><button class="solid" data-act="sp-connect">Connect Spotify</button></section>` : ''}
+      ${S.hasKey || SP.token ? '' : setupCard()}
       <section><div class="sec-h"><h2>${recent.length ? 'Jump back in' : 'Start here'}</h2></div>
         <div class="quick">${quick.map(t => `<button class="tile" data-act="play-track" data-tid="${esc(t.id)}" data-list="${recent.length ? 'recent' : 'starters'}"><img src="${esc(t.thumb)}" alt=""><span><strong>${esc(t.title)}</strong><em>${esc(t.artist)}</em></span><i class="fab" aria-hidden="true">${I.play}</i></button>`).join('')}</div>
       </section>
+      ${SP.token ? `
+        ${!SP.loaded ? `<section><div class="sec-h"><h2>Loading your Spotify…</h2></div>${skeleton(2)}</section>` : ''}
+        ${SP.top.length ? `<section><div class="sec-h"><h2>Your top tracks</h2><small>From Spotify, last 4 weeks</small></div><div class="cards">${SP.top.slice(0, 12).map((t, i) => card(t, 'sp-top', i, true)).join('')}</div></section>` : ''}
+        ${SP.playlists.length ? `<section><div class="sec-h"><h2>Your Spotify playlists</h2><button class="ghost" data-act="nav" data-v="library">Show all</button></div><div class="cards">${SP.playlists.slice(0, 8).map(spPlCard).join('')}</div></section>` : ''}
+        ${SP.recent.length ? `<section><div class="sec-h"><h2>Recently played on Spotify</h2></div><div class="cards">${SP.recent.slice(0, 8).map((t, i) => card(t, 'sp-recent', i)).join('')}</div></section>` : ''}
+      ` : ''}
       ${S.hasKey ? `<section><div class="sec-h"><h2>Trending in ${esc(regionName)}</h2><small>YouTube music chart, updated daily</small></div>
         ${trending.err ? `<p class="hint">${esc(trending.err)}</p>` : trending.loading && !trending.tracks.length ? skeleton(2) : `<div class="cards">${trending.tracks.slice(0, 12).map((t, i) => card(t, 'trending', i, true)).join('')}</div>`}
       </section>` : ''}
@@ -278,7 +489,11 @@ function renderMain() {
   } else if (v.type === 'search') {
     h = `<div class="view">
       <form id="search-form"><label class="search">${I.search}<span class="sr">Search</span><input id="q" type="search" placeholder="What do you want to listen to?" value="${esc(search.q)}" autocomplete="off" enterkeyhint="search"></label>
-      <div class="hint">Press Enter to search. You can also paste a YouTube link here.</div></form>
+      <div class="srcs" role="group" aria-label="Search source">
+        <button type="button" class="src-btn ${search.src === 'sp' ? 'on' : ''}" data-act="src" data-src="sp" aria-pressed="${search.src === 'sp'}">Spotify</button>
+        <button type="button" class="src-btn ${search.src === 'yt' ? 'on' : ''}" data-act="src" data-src="yt" aria-pressed="${search.src === 'yt'}">YouTube</button>
+        <span class="hint">Press Enter to search. Song links from either service work too.</span>
+      </div></form>
       <div id="sres"></div></div>`;
   } else if (v.type === 'liked') {
     h = `<div class="view"><header class="phead"><div class="cv heart">${I.heart}</div>
@@ -292,8 +507,29 @@ function renderMain() {
         <div class="card" role="button" tabindex="0" data-act="nav" data-v="liked"><div class="art"><div class="mosaic empty" style="aspect-ratio:1;border-radius:12px;background:linear-gradient(135deg,var(--c2),var(--c1));color:#fff">${I.heart}</div></div><strong>Liked Songs</strong><em>${plDur(liked)}</em></div>
         ${playlists.map(p => `<div class="card" role="button" tabindex="0" data-act="open-pl" data-id="${p.id}"><div class="art">${mosaic(p.tracks).replace('class="mosaic', 'style="aspect-ratio:1;border-radius:12px" class="mosaic')}</div><strong>${esc(p.name)}</strong><em>${plDur(p.tracks)}</em></div>`).join('')}
       </div></section>
+      ${SP.token ? `<section><div class="sec-h"><h2>From Spotify</h2>${SP.me ? `<small>${esc(SP.me.display_name || SP.me.id)}</small>` : ''}</div><div class="cards">
+        <div class="card" role="button" tabindex="0" data-act="nav" data-v="sp-liked"><div class="art"><div class="mosaic empty" style="aspect-ratio:1;border-radius:12px;background:linear-gradient(135deg,var(--c3),var(--c1));color:#fff">${I.heart}</div></div><strong>Spotify Liked Songs</strong><em>${SP.liked.length}${SP.liked.length === 50 ? '+' : ''} songs</em></div>
+        ${SP.playlists.map(spPlCard).join('')}
+      </div></section>` : SP.clientId ? `<section class="sp-banner"><div><h3>Bring in your Spotify library</h3><p>Connect your Premium account to see your playlists here.</p></div><button class="solid" data-act="sp-connect">Connect Spotify</button></section>` : ''}
       ${recent.length ? `<section><div class="sec-h"><h2>Recently played</h2></div>${rows(recent.slice(0, 15), 'recent')}</section>` : ''}
     </div>`;
+  } else if (v.type === 'sp-liked') {
+    h = `<div class="view"><header class="phead"><div class="cv heart" style="background:linear-gradient(135deg,var(--c3),var(--c1))">${I.heart}</div>
+        <div><div class="eyebrow">Spotify playlist</div><h1>Spotify Liked Songs</h1><span class="meta">${SP.me ? `<b>${esc(SP.me.display_name || '')}</b> · ` : ''}${plDur(SP.liked)}${SP.liked.length === 50 ? ' (latest 50)' : ''}</span></div></header>
+      ${SP.liked.length ? `<div class="actions"><button class="fab" data-act="play-list" data-list="sp-liked" aria-label="Play Spotify Liked Songs">${I.play}</button><button class="icon-btn ${S.shuffle ? 'on' : ''}" data-act="shuffle" aria-label="Shuffle">${I.shuffle}</button></div>${rows(SP.liked, 'sp-liked')}`
+        : SP.loaded ? `<div class="empty">${I.heart}<h3>No liked songs on Spotify yet</h3></div>` : skeleton(6)}</div>`;
+  } else if (v.type === 'sppl') {
+    const p = SP.playlists.find(x => x.id === v.id) || { name: 'Playlist', owner: '', img: '' };
+    const l = SP.lists[v.id], err = SP.listErr[v.id];
+    h = `<div class="view"><header class="phead"><div class="cv">${p.img ? `<img src="${esc(p.img)}" alt="" style="width:100%;height:100%;object-fit:cover">` : mosaic([])}</div>
+        <div><div class="eyebrow">Spotify playlist</div><h1>${esc(p.name)}</h1><span class="meta"><b>${esc(p.owner)}</b>${l ? ' · ' + plDur(l) : ''}</span></div></header>
+      ${err ? `<div class="empty">${I.music}<h3>This playlist would not load</h3><p>${esc(err)}</p><a class="ghost" href="https://open.spotify.com/playlist/${encodeURIComponent(v.id)}" target="_blank" rel="noopener">Open in Spotify</a></div>`
+        : !l ? skeleton(8)
+        : l.length ? `<div class="actions"><button class="fab" data-act="play-list" data-list="sppl:${esc(v.id)}" aria-label="Play ${esc(p.name)}">${I.play}</button><button class="icon-btn ${S.shuffle ? 'on' : ''}" data-act="shuffle" aria-label="Shuffle">${I.shuffle}</button><a class="ghost" href="https://open.spotify.com/playlist/${encodeURIComponent(v.id)}" target="_blank" rel="noopener">Open in Spotify</a></div>${rows(l, 'sppl:' + v.id)}`
+        : `<div class="empty">${I.music}<h3>This playlist is empty</h3></div>`}</div>`;
+    if (!l && !err) spLoadPlaylist(v.id);
+  } else if (v.type === 'sp-setup') {
+    h = `<div class="view">${spSetupCard()}</div>`;
   } else if (v.type === 'playlist') {
     const p = playlists.find(x => x.id === v.id);
     if (!p) { S.view = { type: 'library' }; return renderMain(); }
@@ -310,14 +546,18 @@ function renderMain() {
   if (v.type === 'search') {
     renderSearch();
     const q = $('#q'); q.focus();
-    $('#search-form').addEventListener('submit', e => { e.preventDefault(); const val = q.value.trim(); if (ytId(val)) playLink(val); else runSearch(val); });
+    $('#search-form').addEventListener('submit', e => { e.preventDefault(); const val = q.value.trim(); if (ytId(val) || spId(val)) playLink(val); else runSearch(val); });
   }
   const pf = $('#paste-form'); if (pf) pf.addEventListener('submit', e => { e.preventDefault(); playLink($('#paste').value); });
   renderSide(); syncState();
 }
 function renderSearch() {
   const box = $('#sres'); if (!box) return;
-  if (!S.hasKey) { box.innerHTML = setupCard(); return; }
+  if (search.src === 'yt' && !S.hasKey) { box.innerHTML = setupCard(); return; }
+  if (search.src === 'sp' && !SP.token) {
+    box.innerHTML = SP.clientId ? `<section class="sp-banner"><div><h3>Search Spotify</h3><p>Connect your Premium account to search and play every song on Spotify.</p></div><button class="solid" data-act="sp-connect">Connect Spotify</button></section>` : spSetupCard();
+    return;
+  }
   if (search.loading && !search.tracks.length) box.innerHTML = skeleton(8);
   else if (search.err) box.innerHTML = `<div class="empty">${I.search}<h3>Search didn't work</h3><p>${esc(search.err)}</p></div>`;
   else if (search.tracks.length) box.innerHTML = `<div class="sec-h"><h2>Songs</h2><small>Results for “${esc(search.q)}”</small></div>${rows(search.tracks, 'search')}
@@ -329,12 +569,15 @@ function renderSearch() {
 async function runSearch(q, more) {
   q = (q || '').trim(); if (!q) return;
   if (S.view.type !== 'search') { S.view = { type: 'search' }; search.q = q; renderMain(); }
-  if (!S.hasKey) return;
+  const src = search.src;
+  if (src === 'yt' ? !S.hasKey : !SP.token) { search.q = q; renderSearch(); return; }
   if (!more) { search.q = q; search.tracks = []; search.next = null; }
   search.loading = true; search.err = null; renderSearch();
   try {
-    const j = await api(`/api/search?q=${encodeURIComponent(q)}${more && search.next ? '&page=' + encodeURIComponent(search.next) : ''}`);
-    if (search.q !== q) return;
+    const j = src === 'sp'
+      ? await spSearch(q, more ? search.next || 0 : 0)
+      : await api(`/api/search?q=${encodeURIComponent(q)}${more && search.next ? '&page=' + encodeURIComponent(search.next) : ''}`);
+    if (search.q !== q || search.src !== src) return;
     const seen = new Set(search.tracks.map(t => t.id));
     search.tracks = search.tracks.concat(regAll(j.tracks).filter(t => !seen.has(t.id)));
     search.next = j.next;
@@ -343,12 +586,18 @@ async function runSearch(q, more) {
 }
 function renderSide() {
   const nv = [['home', 'Home', I.home], ['search', 'Search', I.search], ['library', 'Your Library', I.library]];
-  const on = S.view.type === 'playlist' || S.view.type === 'liked' ? 'library' : S.view.type;
+  const on = ['playlist', 'liked', 'sppl', 'sp-liked'].includes(S.view.type) ? 'library' : S.view.type;
   $('#nav').innerHTML = nv.map(([v, l, ic]) => `<button data-act="nav" data-v="${v}" class="${on === v ? 'on' : ''}" aria-label="${l}">${ic}<span>${l}</span></button>`).join('');
   $('#plist').innerHTML = [`<li><button data-act="nav" data-v="liked" class="${S.view.type === 'liked' ? 'on' : ''}"><span class="ph">${I.heart}</span><span><strong>Liked Songs</strong><em>Playlist · ${liked.length} songs</em></span></button></li>`]
     .concat(playlists.map(p => `<li><button data-act="open-pl" data-id="${p.id}" class="${S.view.type === 'playlist' && S.view.id === p.id ? 'on' : ''}">${mosaic(p.tracks)}<span><strong>${esc(p.name)}</strong><em>Playlist · ${p.tracks.length} songs</em></span></button></li>`))
     .concat(playlists.length ? [] : [`<li><button data-act="new-pl"><span class="ph" style="background:rgba(255,255,255,.08);color:var(--mute)">${I.plus}</span><span><strong>Create a playlist</strong><em>It's easy, we'll help</em></span></button></li>`])
+    .concat(SP.token ? [`<li class="plist-lbl">Spotify</li>`, `<li><button data-act="nav" data-v="sp-liked" class="${S.view.type === 'sp-liked' ? 'on' : ''}"><span class="ph" style="background:linear-gradient(135deg,var(--c3),var(--c1))">${I.heart}</span><span><strong>Liked Songs</strong><em>Spotify · ${SP.liked.length}${SP.liked.length === 50 ? '+' : ''} songs</em></span></button></li>`] : [])
+    .concat(SP.playlists.map(p => `<li><button data-act="open-sppl" data-id="${esc(p.id)}" class="${S.view.type === 'sppl' && S.view.id === p.id ? 'on' : ''}">${p.img ? `<img class="mosaic one" src="${esc(p.img)}" alt="" style="object-fit:cover">` : mosaic([])}<span><strong>${esc(p.name)}</strong><em>Spotify · ${esc(p.owner)}</em></span></button></li>`))
     .join('');
+  const chip = $('#spchip');
+  if (!SP.clientId) chip.innerHTML = `<button class="sp-connect" data-act="nav" data-v="sp-setup"><span class="dot"></span><span><strong>Add Spotify</strong><em>Play with your Premium account</em></span></button>`;
+  else if (!SP.token) chip.innerHTML = `<button class="sp-connect" data-act="sp-connect"><span class="dot"></span><span><strong>Connect Spotify</strong><em>Sign in with Premium</em></span></button>`;
+  else chip.innerHTML = `<div class="sp-me">${SP.me?.images?.[0]?.url ? `<img src="${esc(SP.me.images[0].url)}" alt="">` : `<span class="dot on"></span>`}<span><strong>${esc(SP.me?.display_name || 'Spotify')}</strong><em>${SP.ready ? 'Spotify player ready' : 'Starting Spotify player…'}</em></span><button class="icon-btn" data-act="sp-logout" aria-label="Disconnect Spotify" title="Disconnect Spotify">${I.x}</button></div>`;
 }
 const miniRow = (x, key) => `<button class="mini" data-act="play-track" data-tid="${esc(x.id)}" data-list="${key}"><img src="${esc(x.thumb)}" alt=""><span><strong>${esc(x.title)}</strong><em>${esc(x.artist)}</em></span></button>`;
 function renderNP() {
@@ -360,7 +609,7 @@ function renderNP() {
     $('#upnext').innerHTML = `<h4>Try one</h4>${STARTERS.slice(0, 5).map(x => miniRow(x, 'starters')).join('')}`;
     return;
   }
-  $('#np-info').innerHTML = `<div><h3>${esc(t.title)}</h3><p>${esc(t.artist)}</p></div><button class="like" data-act="like" data-id="${esc(t.id)}" aria-pressed="${isLiked(t.id)}" aria-label="Save to Liked Songs">${I.heart}</button>`;
+  $('#np-info').innerHTML = `<div><h3>${esc(t.title)}</h3><p>${esc(t.artist)}</p>${t.src === 'sp' ? `<a class="src-link" href="https://open.spotify.com/track/${encodeURIComponent(spRaw(t))}" target="_blank" rel="noopener">Listen on Spotify</a>` : ''}</div><button class="like" data-act="like" data-id="${esc(t.id)}" aria-pressed="${isLiked(t.id)}" aria-label="Save to Liked Songs">${I.heart}</button>`;
   const q = S.queue, i = q.findIndex(x => x.id === t.id), nx = [];
   for (let k = 1; k < Math.min(8, q.length); k++) { const j = i + k; if (j < q.length || S.repeat === 1) nx.push(q[j % q.length]); }
   $('#upnext').innerHTML = `<h4>Up next</h4>${nx.length ? nx.map(x => miniRow(x, 'queue')).join('') : '<p>The queue ends here.</p>'}`;
@@ -377,7 +626,8 @@ function onTrackChange() {
   themeFrom(t);
   renderNow(); renderNP(); syncState();
   $('#vibet').textContent = t.title; $('#vibes').textContent = t.artist;
-  $('#vibebg').style.backgroundImage = `url("${t.thumb}")`;
+  $('#vibebg').style.backgroundImage = `url("${t.big || t.thumb}")`;
+  if (t.src === 'sp') document.querySelectorAll('.art-stage img').forEach(im => { im.src = t.big || t.thumb; });
   if (S.view.type === 'library') renderMain();
 }
 function syncState() {
@@ -402,9 +652,17 @@ function ytId(s) {
   const m = s.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/);
   return m ? m[1] : null;
 }
+const spId = s => ((s || '').trim().match(/(?:open\.spotify\.com\/(?:intl-[a-z]+\/)?track\/|spotify:track:)([A-Za-z0-9]{22})/) || [])[1] || null;
 async function playLink(s) {
+  const sid = spId(s);
+  if (sid) {
+    if (!SP.token) { toast(SP.clientId ? 'Connect Spotify first, then paste the link again.' : 'Set up Spotify first (bottom of the sidebar).'); return; }
+    try { const t = spTrack(await sp('/tracks/' + sid)); playTrack(t, [t], 'one:' + t.id); const p = $('#paste'); if (p) p.value = ''; }
+    catch (e) { toast(e.message); }
+    return;
+  }
   const id = ytId(s);
-  if (!id) { toast('Paste a full YouTube link, like youtube.com/watch?v=…'); return; }
+  if (!id) { toast('Paste a full YouTube or Spotify song link.'); return; }
   try {
     const { track } = await api('/api/info?id=' + id);
     playTrack(track, [reg(track)], 'one:' + id);
@@ -425,7 +683,9 @@ function openMenu(btn, t, key) {
     <button data-act="m-new" role="menuitem">${I.plus}New playlist…</button>
     <hr>
     ${inPl ? `<button data-act="m-remove" data-pl="${inPl.id}" role="menuitem">${I.trash}Remove from this playlist</button>` : ''}
-    <a href="https://www.youtube.com/watch?v=${encodeURIComponent(t.id)}" target="_blank" rel="noopener" role="menuitem">${I.out}Open on YouTube</a>`;
+    ${t.src === 'sp'
+      ? `<a href="https://open.spotify.com/track/${encodeURIComponent(spRaw(t))}" target="_blank" rel="noopener" role="menuitem">${I.out}Open in Spotify</a>`
+      : `<a href="https://www.youtube.com/watch?v=${encodeURIComponent(t.id)}" target="_blank" rel="noopener" role="menuitem">${I.out}Open on YouTube</a>`}`;
   menu.dataset.id = t.id;
   menu.hidden = false;
   const r = btn.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
@@ -483,6 +743,11 @@ document.addEventListener('click', async e => {
       e.stopPropagation();
       const t = REG.get(el.dataset.id); if (!t) return;
       if (isLiked(t.id)) liked = liked.filter(x => x.id !== t.id); else liked = [t, ...liked];
+      if (t.src === 'sp' && SP.token) {   // keep Spotify's own Liked Songs in step
+        const on = isLiked(t.id);
+        sp(`/me/tracks?ids=${spRaw(t)}`, { method: on ? 'PUT' : 'DELETE' }).catch(() => {});
+        SP.liked = on ? [t, ...SP.liked.filter(x => x.id !== t.id)] : SP.liked.filter(x => x.id !== t.id);
+      }
       save(); el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
       toast(isLiked(t.id) ? 'Saved to Liked Songs' : 'Removed from Liked Songs');
       closeMenu();
@@ -524,6 +789,18 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'modal-cancel': closeModal(null); break;
+    case 'sp-connect': spLogin(); break;
+    case 'sp-logout': spLogout(); toast('Spotify disconnected'); break;
+    case 'open-sppl': S.view = { type: 'sppl', id: el.dataset.id }; renderMain(); break;
+    case 'play-sppl': {
+      e.stopPropagation();
+      SP.player?.activateElement?.();
+      const id = el.dataset.id; await spLoadPlaylist(id);
+      const l = SP.lists[id] || []; if (!l.length) { toast(SP.listErr[id] || 'That playlist has no playable songs.'); return; }
+      playTrack(S.shuffle ? l[Math.floor(Math.random() * l.length)] : l[0], l, 'sppl:' + id);
+      break;
+    }
+    case 'src': search.src = el.dataset.src; search.tracks = []; search.next = null; search.err = null; renderMain(); if (search.q) runSearch(search.q); break;
     case 'mood': runSearch(el.dataset.q); break;
     case 'more-results': runSearch(search.q, true); break;
     case 'vibe': openVibe(); break;
@@ -548,7 +825,7 @@ $('.main').addEventListener('scroll', closeMenu, { passive: true });
 window.addEventListener('resize', closeMenu);
 document.addEventListener('paste', e => {
   const tag = (e.target.tagName || '').toLowerCase(); if (tag === 'input' || tag === 'textarea') return;
-  const txt = e.clipboardData?.getData('text') || ''; if (ytId(txt)) { e.preventDefault(); playLink(txt); }
+  const txt = e.clipboardData?.getData('text') || ''; if (ytId(txt) || spId(txt)) { e.preventDefault(); playLink(txt); }
 });
 
 const seek = $('#seek'); let dragging = false;
@@ -565,14 +842,17 @@ function closeVibe() { $('#vibe').hidden = true; try { if (document.fullscreenEl
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && !$('#vibe').hidden) $('#vibe').hidden = true; });
 
 /* ================= frame loop: player placement, progress, vibe visuals ================= */
-const host = $('#yt-host'), pip = $('#pip'), np = $('#np'), vibe = $('#vibe');
+const host = $('#yt-host'), pip = $('#pip'), np = $('#np'), vibe = $('#vibe'), npArt = $('#np-art'), vibeArt = $('#vibe-art');
 let lastRect = '';
 function placePlayer() {
-  const vibeOpen = !vibe.hidden, npOn = getComputedStyle(np).display !== 'none';
-  const wantPip = !!S.track && !vibeOpen && !npOn;
+  const vibeOpen = !vibe.hidden, npOn = getComputedStyle(np).display !== 'none', isSp = S.track?.src === 'sp';
+  // Spotify has no video, so album art takes the video's place and the floating card isn't needed.
+  if (npArt.hidden === isSp) npArt.hidden = !isSp;
+  if (vibeArt.hidden === isSp) vibeArt.hidden = !isSp;
+  const wantPip = !!S.track && !isSp && !vibeOpen && !npOn;
   if (pip.hidden === wantPip) pip.hidden = !wantPip;
   const slot = vibeOpen ? $('#vibe-slot') : npOn ? $('#np-slot') : wantPip ? $('#pip-slot') : null;
-  host.classList.toggle('show', !!(slot && S.track));
+  host.classList.toggle('show', !!(slot && S.track && !isSp));
   host.classList.toggle('over', vibeOpen);
   if (!slot) return;
   const r = slot.getBoundingClientRect(), key = `${r.left|0},${r.top|0},${r.width|0},${r.height|0}`;
@@ -623,6 +903,9 @@ applyVol(); renderMain(); renderNow(); renderNP(); syncState();
 requestAnimationFrame(frame);
 api('/api/status').then(async s => {
   S.hasKey = !!s.hasKey;
+  SP.clientId = s.spotifyClientId || '';
+  if (SP.clientId) await spBoot(); else if (SP.token) spLogout();
+  renderSide();
   if (S.hasKey) { trending.loading = true; if (S.view.type === 'home') renderMain(); }
   else if (S.view.type === 'home' || S.view.type === 'search') renderMain();
   if (!S.hasKey) return;
