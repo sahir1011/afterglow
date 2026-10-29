@@ -1,0 +1,13 @@
+{
+  "name": "afterglow",
+  "version": "1.0.0",
+  "description": "A free music player with a wild UI, powered by YouTube.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

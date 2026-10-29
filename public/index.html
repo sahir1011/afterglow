@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Afterglow</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff4fa3'/%3E%3Cstop offset='.55' stop-color='%23ffb84f'/%3E%3Cstop offset='1' stop-color='%236a5cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='15' fill='url(%23g)'/%3E%3Cpath d='M5 19h22M7 23h18M10 27h12' stroke='%2309080f' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Space+Mono:wght@400;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="aura" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="app">
+  <aside class="side glass">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff4fa3"/><stop offset=".55" stop-color="#ffb84f"/><stop offset="1" stop-color="#6a5cff"/></linearGradient></defs><circle cx="16" cy="16" r="15" fill="url(#lg)"/><path d="M5 19h22M7 23h18M10 27h12" stroke="#09080f" stroke-width="2.4" stroke-linecap="round"/></svg>
+      <span>afterglow</span>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="lib-head"><span>Your library</span><button data-act="new-pl" aria-label="Create playlist" title="Create playlist"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
+    <ul class="plist" id="plist"></ul>
+  </aside>
+
+  <main class="main glass" id="main"></main>
+
+  <aside class="np glass" id="np">
+    <div class="np-head"><span id="np-from">Now playing</span><button class="icon-btn" data-act="vibe" aria-label="Open vibe mode" id="np-vibe"></button></div>
+    <div class="np-stage"><div class="slot" id="np-slot"></div><div class="np-empty" id="np-empty"><span></span><p>Your video shows up here when a song plays.</p></div></div>
+    <div class="np-info" id="np-info"></div>
+    <div class="upnext" id="upnext"></div>
+  </aside>
+
+  <footer class="bar glass" id="bar">
+    <div class="now" id="now"></div>
+    <div class="ctrl">
+      <div class="btns">
+        <button class="icon-btn sh" id="shuf" data-act="shuffle" aria-label="Shuffle" aria-pressed="false"></button>
+        <button class="icon-btn" data-act="prev" aria-label="Previous track" id="prevb"></button>
+        <button class="play" data-act="toggle" id="playb" aria-label="Play"></button>
+        <button class="icon-btn" data-act="next" aria-label="Next track" id="nextb"></button>
+        <button class="icon-btn rp" id="rep" data-act="repeat" aria-label="Repeat off"></button>
+      </div>
+      <div class="prog"><span id="tcur">0:00</span><input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek"><span id="tdur">0:00</span></div>
+    </div>
+    <div class="right">
+      <button class="vibe-btn" data-act="vibe" id="vibeb"></button>
+      <button class="icon-btn" data-act="mute" id="muteb" aria-label="Mute"></button>
+      <input type="range" id="vol" min="0" max="100" value="80" aria-label="Volume">
+    </div>
+  </footer>
+</div>
+
+<!-- Floating video card for narrow screens (YouTube requires the player to stay visible). -->
+<div class="pip glass" id="pip" hidden><div class="slot" id="pip-slot"></div></div>
+
+<div class="vibe" id="vibe" hidden>
+  <div class="bg" id="vibebg"></div>
+  <canvas id="vibecv"></canvas>
+  <div class="vibe-stage"><div class="slot" id="vibe-slot"></div></div>
+  <div class="vt"><h2 id="vibet"></h2><p id="vibes"></p></div>
+  <div class="close">
+    <button data-act="toggle" aria-label="Play or pause" id="vibeplay"></button>
+    <button data-act="next" aria-label="Next track" id="vibenext"></button>
+    <button data-act="close-vibe" aria-label="Close vibe mode" id="vibex"></button>
+  </div>
+</div>
+
+<!-- The one YouTube player. It is moved over whichever .slot is visible, so it never reloads. -->
+<div id="yt-host" aria-label="Video player"><div id="yt"></div></div>
+
+<div class="menu glass" id="menu" hidden role="menu"></div>
+<div class="modal-veil" id="modal" hidden>
+  <form class="modal glass" id="modal-form">
+    <h3 id="modal-title">New playlist</h3>
+    <input id="modal-input" maxlength="60" autocomplete="off" placeholder="My playlist">
+    <div class="modal-btns"><button type="button" class="ghost" data-act="modal-cancel">Cancel</button><button type="submit" class="solid">Create</button></div>
+  </form>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/app.js"></script>
+<script src="https://www.youtube.com/iframe_api" async></script>
+</body>
+</html>
